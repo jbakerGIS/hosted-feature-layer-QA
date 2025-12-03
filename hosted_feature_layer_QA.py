@@ -38,8 +38,7 @@ feature = layer.query(where="1=1", out_fields="*", return_geometry=False)
 sdf = feature.sdf
 
 # Show how many records exist in the layer
-# TODO - Add more detailed print statement
-print(f"Loaded {len(sdf)} records.\n")
+print(f"Layer consists of {len(sdf)} records.\n")
 
 # Create empty lists for functions
 field_list = []
@@ -89,14 +88,16 @@ def duplicate_check(df, fields):
         # Remove unnecessary fields from duplicate check
         if field not in ['City', 'State','Zip_Code', 'Last_Updated', 'QA_Status']:
             duplicates = df[df[field].duplicated(keep=False) & df[field].notna()]
-            
+
+            # If duplicates found, log them
             if len(duplicates) > 0:
                 print(f"- Duplicates found in '{field}':")
                 for val in duplicates[field].unique():
                     group = duplicates[duplicates[field] == val]
                     oids = group['OBJECTID'].tolist()
                     print(f"    Value: '{val}' → ObjectIDs {oids}")
-                    
+
+                    # Add each duplicate occurrence to results
                     for oid in oids:
                         add_issue("Duplicate Value", field, oid, value=val, 
                                 notes=f"Duplicate of value '{val}'")
@@ -111,15 +112,18 @@ def domain_check(df, fl):
     # Identify fields with domains
     domain_fields = [f["name"] for f in fl.properties.fields 
                      if "domain" in f and f["domain"]]
-
+    
+    # Create a map of field names to their valid coded values
     domain_map = {}
     for f in fl.properties.fields:
         if f["name"] in domain_fields and "domain" in f and f["domain"]:
             domain_map[f["name"]] = [d["code"] for d in f["domain"]["codedValues"]]
 
+    # Check each domain field for invalid values
     for field, valid_codes in domain_map.items():
         invalid_rows = df[~df[field].isin(valid_codes) & df[field].notna()]
         
+        # If invalid values found, log them
         if len(invalid_rows) > 0:
             print(f"  - Invalid coded values in '{field}':")
             for _, row in invalid_rows.iterrows():
@@ -137,9 +141,11 @@ def geometry_check(df):
 
     print("Checking for empty or missing geometry...\n")
 
-    feature_set = layer.query(where="1=1", return_geometry=True) # Query all features
+    # Query all features with geometry
+    feature_set = layer.query(where="1=1", return_geometry=True)
     features = feature_set.features
-
+    
+    # Check each feature for missing geometry
     invalid_geometries = []
     for f in features:
         geometry = f.geometry
@@ -148,6 +154,7 @@ def geometry_check(df):
             invalid_geometries.append(oid)
             add_issue("Missing Geometry", "SHAPE", oid, notes="Null geometry")
 
+    # If missing geometries, print the OIDs
     if invalid_geometries:
         print("  - Missing geometry:")
     for obj_id in invalid_geometries:

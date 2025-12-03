@@ -1,72 +1,195 @@
 from arcgis.gis import GIS
-from arcgis.features import FeatureLayer
 import pandas as pd
+from datetime import date
 
-# 1. Connect to ArcGIS Online
+# Set input parameters
+ITEM_ID = "b7fd31c8206f4fdb9b66fcced3271e28"
+OUTPUT_PATH = r"C:/Users/viver/Documents/scripts/scrap"
 
-gis = GIS("https://www.arcgis.com", "your_username", "your_password")
+# Connect to AGOL
+gis = GIS("https://www.arcgis.com", "Baker.jst", "Dr3amb!g")
 
-# 2. Access hosted feature layer by item ID + layer index
+# Access hosted feature layer by item ID
+fl_item = gis.content.get(ITEM_ID)
 
-item_id = "YOUR_FEATURE_LAYER_ITEM_ID"
-fl_item = gis.content.get(item_id)
-
-# If the item contains multiple layers, pick the correct one:
+# Get the layer name
 layer = fl_item.layers[0]  # adjust index if needed
-print(f"Connected to layer: {layer.properties.name}")
+layer_name = layer.properties.name
 
-# 3. Query all records
+print(f'Connected to layer: {layer_name}')
 
-features = layer.query(where="1=1", out_fields="*", return_geometry=False)
-df = features.sdf  # Spatially-enabled dataframe (pandas-like)
+# Prompt user to confirm layer name before proceeding
+while True:
+    choice = input("Is this the correct layer name? (y/n): ").lower()
+    if choice == 'y':
+        print("Continuing the QA check...")
+        # Your code to continue the process
+        break  # Exit the loop
+    elif choice == 'n':
+        print("Exiting the QA check. Please verify the correct layer item ID and try again.")
+        break  # Exit the loop
+    else:
+        print("Invalid input. Please enter 'y' or 'n'.")
 
-print(f"Loaded {len(df)} records.\n")
+# Query all records
+feature = layer.query(where="1=1", out_fields="*", return_geometry=False)
 
-# 4. Define QA checks
+# Convert to SEDF
+sdf = feature.sdf
 
-qa_report = {}
+# Show how many records exist in the layer
+# TODO - Add more detailed print statement
+print(f"Loaded {len(sdf)} records.\n")
 
-# Example required fields
-required_fields = ["SiteID", "Status", "CreatedDate"]
+# Create empty lists for functions
+field_list = []
+qa_results = []
 
-# ---- Null value check ----
-null_issues = {}
-for field in required_fields:
-    null_rows = df[df[field].isna()]
-    if len(null_rows) > 0:
-        null_issues[field] = len(null_rows)
+# Return fields from the hosted feature layer  
+print(f"Fields in layer '{layer.properties.name}':")
+for field in layer.properties.fields:
+    field_list.append(field['name'])
+    print(f"  Name: {field['name']}, Type: {field['type']}\n")
 
-qa_report["null_checks"] = null_issues
+# Helper function to add a QA issue to the output list
+def add_issue(issue_type, field, oid, value=None, notes=None):
+    qa_results.append({
+        "IssueType": issue_type,
+        "FieldName": field,
+        "ObjectID": oid,
+        "Value": value,
+        "Notes": notes
+    })
 
-# ---- Duplicate ID check ----
-if "SiteID" in df.columns:
-    duplicates = df[df.duplicated("SiteID", keep=False)]
-    qa_report["duplicate_ids"] = len(duplicates)
-else:
-    qa_report["duplicate_ids"] = "Field not present"
+# ==================== MAIN LOGIC ====================
 
-# ---- Coded domain validation (example) ----
-valid_status_values = ["Active", "Inactive", "Proposed"]
-if "Status" in df.columns:
-    bad_status = df[~df["Status"].isin(valid_status_values)]
-    qa_report["bad_status_values"] = len(bad_status)
+def null_check(df, fields):
+    '''Check for null values in the feature layer table.'''
 
-# ---- Range check example ----
-if "Score" in df.columns:
-    out_of_range = df[(df["Score"] < 0) | (df["Score"] > 100)]
-    qa_report["score_range_issues"] = len(out_of_range)
+    print("Checking for NULL values...\n")
 
-# ---- Date validity example ----
-if "CreatedDate" in df.columns:
-    weird_dates = df[df["CreatedDate"] > pd.Timestamp.now()]
-    qa_report["future_dates"] = len(weird_dates)
+    for field in fields:
+        null_rows = df[df[field].isna()]
+        
+        if len(null_rows) > 0:
+            print(f"- Null values in '{field}':")
+            for _, row in null_rows.iterrows():
+                oid = row['OBJECTID']
+                print(f"      ObjectID: {oid}")
+                add_issue("NULL Value", field, oid, value=None)
+        else:
+            print(f"No null values in '{field}'")
 
-# 5. Output QA Report
+def duplicate_check(df, fields):
+    '''Check for duplicate values in the feature layer table.'''
 
-print("\n====== QA REPORT ======\n")
-for check, result in qa_report.items():
-    print(f"{check}: {result}")
+    print("\nChecking for duplicate values...\n")
 
-# Export failures to CSV for review
-duplicates.to_csv("duplicate_ids.csv", index=False)
-print("\nExported duplicate ID list to duplicate_ids.csv")
+    for field in fields:
+        # Remove unnecessary fields from duplicate check
+        if field not in ['City', 'State','Zip_Code', 'Last_Updated', 'QA_Status']:
+            duplicates = df[df[field].duplicated(keep=False) & df[field].notna()]
+            
+            if len(duplicates) > 0:
+                print(f"- Duplicates found in '{field}':")
+                for val in duplicates[field].unique():
+                    group = duplicates[duplicates[field] == val]
+                    oids = group['OBJECTID'].tolist()
+                    print(f"    Value: '{val}' → ObjectIDs {oids}")
+                    
+                    for oid in oids:
+                        add_issue("Duplicate Value", field, oid, value=val, 
+                                notes=f"Duplicate of value '{val}'")
+            else:
+                print(f"No duplicates in '{field}'")
+
+def domain_check(df, fl):
+    '''Check for invalid coded values in domain fields.'''
+
+    print("\nChecking domain/coded-value fields...\n")
+    
+    # Identify fields with domains
+    domain_fields = [f["name"] for f in fl.properties.fields 
+                     if "domain" in f and f["domain"]]
+
+    domain_map = {}
+    for f in fl.properties.fields:
+        if f["name"] in domain_fields and "domain" in f and f["domain"]:
+            domain_map[f["name"]] = [d["code"] for d in f["domain"]["codedValues"]]
+
+    for field, valid_codes in domain_map.items():
+        invalid_rows = df[~df[field].isin(valid_codes) & df[field].notna()]
+        
+        if len(invalid_rows) > 0:
+            print(f"  - Invalid coded values in '{field}':")
+            for _, row in invalid_rows.iterrows():
+                oid = row['OBJECTID']
+                bad_val = row[field]
+                print(f"      ObjectID: {oid} → '{bad_val}'")
+                add_issue("Invalid Domain Value", field, oid, 
+                        value=bad_val, 
+                        notes=f"Not in valid domain list: {valid_codes}")
+        else:
+            print(f"All domain values valid in '{field}'")
+
+def geometry_check(df):
+    '''Check for missing geometries in the feature layer table.'''
+
+    print("Checking for empty or missing geometry...\n")
+
+    feature_set = layer.query(where="1=1", return_geometry=True) # Query all features
+    features = feature_set.features
+
+    invalid_geometries = []
+    for f in features:
+        geometry = f.geometry
+        if not geometry:
+            oid = f.attributes['OBJECTID']
+            invalid_geometries.append(oid)
+            add_issue("Missing Geometry", "SHAPE", oid, notes="Null geometry")
+
+    if invalid_geometries:
+        print("  - Missing geometry:")
+    for obj_id in invalid_geometries:
+        print(f"      ObjectID: {obj_id}")
+            
+    else:
+       print("All features have valid geometry")
+
+def create_qa_report(results):
+    '''Create a QA report DataFrame from the results list and export it as a csv file.'''
+
+    print("\nWriting QA report to CSV...\n")
+
+    # Create DataFrame from QA results
+    qa_df = pd.DataFrame(results)
+
+    # Export QA results if any issues found
+    if len(qa_df) == 0:
+        print("No issues found. No CSV created.")
+    else:
+        # Get today's date for file naming
+        export_date = date.today()
+        # Save QA results to CSV
+        file_name = f'{layer_name}_QA_{export_date}.csv'
+        export_path = OUTPUT_PATH + "/ "+ file_name
+        qa_df.to_csv(export_path, index=False)
+        print(f"QA report successfully saved to: {OUTPUT_PATH}/{file_name}")
+
+    print("\nQA Complete.")
+
+def main():
+    '''Main function to run the script's logic'''
+
+    # QA Checks
+    null_check(sdf, field_list)
+    duplicate_check(sdf, field_list)
+    domain_check(sdf, layer)
+    geometry_check(sdf)
+    
+    # Create QA report
+    create_qa_report(qa_results)
+
+# Ensure code runs only when executed directly
+if __name__ == "__main__":
+    main()

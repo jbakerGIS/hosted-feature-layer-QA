@@ -1,4 +1,0 @@
-IssueType,FieldName,ObjectID,Value,Notes
-NULL Value,Name,9,,
-Duplicate Value,Name,7,Test Feature 8,Duplicate of value 'Test Feature 8'
-Duplicate Value,Name,8,Test Feature 8,Duplicate of value 'Test Feature 8'

@@ -48,11 +48,12 @@ Note:
 from arcgis.gis import GIS
 import pandas as pd
 from datetime import date
+from pathlib import Path
 
 # Set input parameters
 # TODO add more specific instruction for updating input parameters
 ITEM_ID = "b7fd31c8206f4fdb9b66fcced3271e28"
-OUTPUT_PATH = r"C:/Users/viver/Documents/scripts/scrap"
+OUTPUT_PATH = Path("./output/")
 
 # Connect to AGOL
 gis = GIS("https://www.arcgis.com", "Baker.jst", "Dr3amb!g")
@@ -64,20 +65,23 @@ fl_item = gis.content.get(ITEM_ID)
 layer = fl_item.layers[0]  # adjust index if needed
 layer_name = layer.properties.name
 
-print(f'Connected to layer: {layer_name}')
+# Opening print statements
+print('\nBeginning QA check.../n')
+print(f'\nConnected to layer: {layer_name}\n')
 
 # Prompt user to confirm layer name before proceeding
-while True:
-    choice = input("Is this the correct layer name? (y/n): ").lower()
-    if choice == 'y':
-        print("Continuing the QA check...")
-        # Your code to continue the process
-        break  # Exit the loop
-    elif choice == 'n':
-        print("Exiting the QA check. Please verify the correct layer item ID and try again.")
-        break  # Exit the loop
-    else:
-        print("Invalid input. Please enter 'y' or 'n'.")
+def confirm_layer_details():
+    '''Prompt user to confirm the correct layer details before proceeding with QA checks.'''
+    while True:
+        choice = input("Does the information above match the layer you wish to analyze? (y/n): ").lower()
+        if choice == 'y':
+            print("Continuing the QA check...")
+            return True
+        elif choice == 'n':
+            print("Exiting the QA check. Please verify the correct layer item ID and try again.")
+            return False
+        else:
+            print("Invalid input. Please enter 'y' or 'n'.")
 
 # Query all records
 feature = layer.query(where="1=1", out_fields="*", return_geometry=False)
@@ -227,14 +231,17 @@ def create_qa_report(results):
         export_date = date.today()
         # Save QA results to CSV
         file_name = f'{layer_name}_QA_{export_date}.csv'
-        export_path = OUTPUT_PATH + "/ "+ file_name
+        export_path = OUTPUT_PATH / file_name
         qa_df.to_csv(export_path, index=False)
-        print(f"QA report successfully saved to: {OUTPUT_PATH}/{file_name}")
+        print(f"QA report successfully saved to: {export_path}")
 
     print("\nQA Complete.")
 
 def main():
     '''Main function to run the script's logic'''
+    # Confirm the correct layer is selected
+    if not confirm_layer_details():
+        return # Exit if layer is incorrect
 
     # QA Checks
     null_check(sdf, field_list)
